@@ -16,6 +16,9 @@ class ChatAnimatedListReversed extends StatelessWidget {
   /// Optional scroll controller for the underlying [CustomScrollView].
   final ScrollController? scrollController;
 
+  /// Whether the scroll view should shrink wrap its contents.
+  final bool shrinkWrap;
+
   /// Default duration for message insertion animations.
   final Duration insertAnimationDuration;
 
@@ -77,14 +80,12 @@ class ChatAnimatedListReversed extends StatelessWidget {
   /// Physics for the scroll view.
   final ScrollPhysics? physics;
 
-  /// Cache extent for the underlying [CustomScrollView].
-  final double? cacheExtent;
-
   /// Creates a reversed animated chat list.
   const ChatAnimatedListReversed({
     super.key,
     required this.itemBuilder,
     this.scrollController,
+    this.shrinkWrap = false,
     this.insertAnimationDuration = const Duration(milliseconds: 250),
     this.removeAnimationDuration = const Duration(milliseconds: 250),
     this.insertAnimationDurationResolver,
@@ -132,7 +133,6 @@ class ChatAnimatedListReversed extends StatelessWidget {
     this.messagesGroupingMode,
     this.messageGroupingTimeoutInSeconds,
     this.physics,
-    this.cacheExtent,
   });
 
   @override
@@ -142,6 +142,7 @@ class ChatAnimatedListReversed extends StatelessWidget {
       itemBuilder: itemBuilder,
       scrollController: scrollController,
       reversed: true,
+      shrinkWrap: shrinkWrap,
       insertAnimationDuration: insertAnimationDuration,
       removeAnimationDuration: removeAnimationDuration,
       insertAnimationDurationResolver: insertAnimationDurationResolver,
@@ -163,7 +164,6 @@ class ChatAnimatedListReversed extends StatelessWidget {
       startPaginationThreshold: startPaginationThreshold,
       messageGroupingTimeoutInSeconds: messageGroupingTimeoutInSeconds,
       physics: physics,
-      cacheExtent: cacheExtent,
     );
   }
 }

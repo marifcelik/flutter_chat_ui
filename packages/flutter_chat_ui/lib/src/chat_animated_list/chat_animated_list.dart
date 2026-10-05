@@ -2,7 +2,7 @@ import 'dart:async';
 import 'dart:math';
 
 import 'package:diffutil_dart/diffutil.dart' as diffutil;
-import 'package:material_ui/material_ui.dart';
+import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter_chat_core/flutter_chat_core.dart';
 import 'package:provider/provider.dart';
@@ -44,6 +44,9 @@ class ChatAnimatedList extends StatefulWidget {
   /// Whether the list should be laid out and scrolled in reverse order.
   /// When true, new items are added at the bottom and the list grows upwards.
   final bool reversed;
+
+  /// Whether the scroll view should shrink wrap its contents.
+  final bool shrinkWrap;
 
   /// Default duration for message insertion animations.
   final Duration insertAnimationDuration;
@@ -121,21 +124,13 @@ class ChatAnimatedList extends StatefulWidget {
   /// Physics for the scroll view.
   final ScrollPhysics? physics;
 
-  /// Cache extent for the underlying [CustomScrollView].
-  ///
-  /// Widening this keeps off-screen messages measured by [SliverList], so
-  /// their exact heights stay in the scroll extent calculation instead of
-  /// being replaced by the running average of active children. This prevents
-  /// scrollbar thumb jumps when tall messages (e.g. long markdown or tables)
-  /// leave the viewport.
-  final double? cacheExtent;
-
   /// Creates an animated chat list.
   const ChatAnimatedList({
     super.key,
     required this.itemBuilder,
     this.scrollController,
     this.reversed = false,
+    this.shrinkWrap = false,
     this.insertAnimationDuration = const Duration(milliseconds: 250),
     this.removeAnimationDuration = const Duration(milliseconds: 250),
     this.insertAnimationDurationResolver,
@@ -187,7 +182,6 @@ class ChatAnimatedList extends StatefulWidget {
     this.messagesGroupingMode,
     this.messageGroupingTimeoutInSeconds,
     this.physics,
-    this.cacheExtent,
   });
 
   @override
@@ -293,7 +287,7 @@ class _ChatAnimatedListState extends State<ChatAnimatedList>
     }
 
     WidgetsBinding.instance.addPostFrameCallback((_) async {
-      if (!mounted || !_hasLayout || height == 0) {
+      if (!mounted || !_scrollController.hasClients || height == 0) {
         return;
       }
 
@@ -301,14 +295,14 @@ class _ChatAnimatedListState extends State<ChatAnimatedList>
         _scrollController.jumpTo(
           min(
             _scrollController.offset + height,
-            _safeMaxScrollExtent,
+            _scrollController.position.maxScrollExtent,
           ),
         );
       } else {
         await _scrollController.animateTo(
           min(
             _scrollController.offset + height,
-            _safeMaxScrollExtent,
+            _scrollController.position.maxScrollExtent,
           ),
           duration: widget.scrollToEndAnimationDuration,
           curve: Curves.linearToEaseOut,
@@ -355,23 +349,8 @@ class _ChatAnimatedListState extends State<ChatAnimatedList>
   /// For a reversed list, this is 0.
   /// For a normal list, this is `maxScrollExtent`.
   double get _chatEndScrollPosition {
-    return widget.reversed ? 0 : _safeMaxScrollExtent;
+    return widget.reversed ? 0 : _scrollController.position.maxScrollExtent;
   }
-
-  /// Whether the scroll position has been laid out at least once.
-  ///
-  /// `ScrollPosition.maxScrollExtent` is a null-checked field that stays
-  /// null until the viewport's first layout after the position attaches,
-  /// while `hasClients` is already true from attach. Reading it in that
-  /// window throws "Null check operator used on a null value".
-  bool get _hasLayout =>
-      _scrollController.hasClients &&
-      _scrollController.position.hasContentDimensions;
-
-  /// `maxScrollExtent`, or 0 before the first layout — the value this file
-  /// already treats as "not yet scrollable".
-  double get _safeMaxScrollExtent =>
-      _hasLayout ? _scrollController.position.maxScrollExtent : 0;
 
   /// If the scroll-to-bottom button should be shown.
   bool get _shouldShowScrollToBottomButton {
@@ -503,8 +482,8 @@ class _ChatAnimatedListState extends State<ChatAnimatedList>
             child: CustomScrollView(
               controller: _scrollController,
               reverse: widget.reversed,
+              shrinkWrap: widget.shrinkWrap,
               physics: widget.physics,
-              cacheExtent: widget.cacheExtent,
               keyboardDismissBehavior:
                   widget.keyboardDismissBehavior ??
                   ScrollViewKeyboardDismissBehavior.manual,
@@ -524,7 +503,7 @@ class _ChatAnimatedListState extends State<ChatAnimatedList>
             valueListenable: _oldListEmptyNotifier,
             builder: (context, isEmpty, child) {
               if (isEmpty) {
-                return Positioned.fill(
+                return SizedBox(
                   child:
                       builders.emptyChatListBuilder?.call(context) ??
                       const EmptyChatList(),
@@ -580,13 +559,13 @@ class _ChatAnimatedListState extends State<ChatAnimatedList>
   void _linkAnimationToScroll() {
     // In reversed lists, scrolling to the bottom corresponds to a position of 0,
     // which eliminates concerns about the dynamic nature of maxScrollExtent.
-    if (widget.reversed || !_hasLayout) {
+    if (widget.reversed) {
       return;
     }
 
     _scrollController.jumpTo(
       _scrollAnimationController.value *
-          _safeMaxScrollExtent,
+          _scrollController.position.maxScrollExtent,
     );
   }
 
@@ -662,9 +641,9 @@ class _ChatAnimatedListState extends State<ChatAnimatedList>
       // to the very end of the list.
       // See https://stackoverflow.com/a/77175903 for more details.
       if (!widget.reversed && _userHasScrolled) {
-        final extent = _safeMaxScrollExtent;
         _scrollAnimationController.value =
-            extent == 0 ? 0 : _scrollController.offset / extent;
+            _scrollController.offset /
+            _scrollController.position.maxScrollExtent;
         await _scrollAnimationController.fling();
       } else {
         if (widget.scrollToEndAnimationDuration == Duration.zero) {
@@ -691,7 +670,7 @@ class _ChatAnimatedListState extends State<ChatAnimatedList>
 
       // We need this condition because if scroll view is not yet scrollable,
       // we want to wait for the insert animation to finish before scrolling to the end.
-      if (!widget.reversed && _safeMaxScrollExtent == 0) {
+      if (!widget.reversed && _scrollController.position.maxScrollExtent == 0) {
         // Scroll view is not yet scrollable, scroll to the end if
         // new message makes it scrollable.
         _initialScrollToEnd();
@@ -720,7 +699,7 @@ class _ChatAnimatedListState extends State<ChatAnimatedList>
       if (_needsInitialScrollPositionAdjustment) {
         // Flutter might return a bunch of 0 values for maxScrollExtent,
         // we need to ignore those.
-        if (_safeMaxScrollExtent == 0) {
+        if (_scrollController.position.maxScrollExtent == 0) {
           return;
         }
 
@@ -757,9 +736,9 @@ class _ChatAnimatedListState extends State<ChatAnimatedList>
         // See https://stackoverflow.com/a/77175903 for more details.
         // N/A for reversed list above as position 0 is stable, while
         // maxScrollExtent is not.
-        final extent = _safeMaxScrollExtent;
         _scrollAnimationController.value =
-            extent == 0 ? 0 : _scrollController.offset / extent;
+            _scrollController.offset /
+            _scrollController.position.maxScrollExtent;
         _scrollAnimationController.fling();
       }
 
@@ -804,9 +783,9 @@ class _ChatAnimatedListState extends State<ChatAnimatedList>
     // Calculate the user's scroll position as a percentage of the total scrollable area, ranging from 0 to 1.
     // In a standard list, 0 represents the topmost position and 1 represents the bottommost position.
     // In a reversed list, the values are inverted: 1 indicates the top and 0 indicates the bottom.
-    final scrollPercentage = _safeMaxScrollExtent == 0
+    final scrollPercentage = _scrollController.position.maxScrollExtent == 0
         ? 0
-        : _scrollController.offset / _safeMaxScrollExtent;
+        : _scrollController.offset / _scrollController.position.maxScrollExtent;
 
     // --- Handle reaching the end (older messages) ---
     if (widget.onEndReached != null &&
@@ -1086,7 +1065,7 @@ class _ChatAnimatedListState extends State<ChatAnimatedList>
     //   If it's already scrollable, the item is added instantly (Duration.zero),
     //   and the _scrollToEnd logic handles the visual scroll to the new item.
     if (animated &&
-        (widget.reversed || _safeMaxScrollExtent == 0)) {
+        (widget.reversed || _scrollController.position.maxScrollExtent == 0)) {
       if (widget.insertAnimationDurationResolver != null) {
         duration =
             widget.insertAnimationDurationResolver!(data) ??
@@ -1134,7 +1113,7 @@ class _ChatAnimatedListState extends State<ChatAnimatedList>
     //   If it's already scrollable, the item is added instantly (Duration.zero),
     //   and the _scrollToEnd logic handles the visual scroll to the new item.
     if (animated &&
-        (widget.reversed || _safeMaxScrollExtent == 0)) {
+        (widget.reversed || _scrollController.position.maxScrollExtent == 0)) {
       if (widget.insertAnimationDurationResolver != null) {
         duration =
             widget.insertAnimationDurationResolver!(messagesToInsert.last) ??
